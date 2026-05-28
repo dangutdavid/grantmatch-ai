@@ -1,5 +1,11 @@
 import { env, isBackendAiConfigured } from '@/constants/env';
+import {
+  persistGrantMatchResults,
+  recordAiRun,
+  summarizeReadiness,
+} from '@/services/aiPersistenceService';
 import { generateProposalDraft } from '@/services/proposalService';
+import { supabase } from '@/services/supabaseClient';
 import {
   AIMatchInput,
   AIMatchResult,
@@ -41,15 +47,25 @@ export function getAiBackendMode() {
 
 export async function requestGrantMatch(request: GrantMatchRequest): Promise<GrantMatchResponse> {
   if (isBackendAiConfigured) {
-    return aiBackendRequest<GrantMatchResponse, GrantMatchRequest>('match-grants', request);
+    const response = await aiBackendRequest<GrantMatchResponse, GrantMatchRequest>('match-grants', request);
+    persistGrantMatchResults(response.results, request.workspaceId).catch((error) => {
+      console.warn('Unable to persist backend match scores.', error);
+    });
+
+    return response;
   }
 
-  return {
+  const response: GrantMatchResponse = {
     mode: 'mock',
     status: 'completed',
     results: rankGrantsForUser({ profile: request.profile, grants: request.grants }),
     generatedAt: new Date().toISOString(),
   };
+  persistGrantMatchResults(response.results, request.workspaceId).catch((error) => {
+    console.warn('Unable to persist mock match scores.', error);
+  });
+
+  return response;
 }
 
 export async function requestMatchExplanation(request: GrantMatchRequest): Promise<GrantMatchResponse> {
@@ -64,55 +80,125 @@ export async function requestProposalGeneration(
   request: ProposalGenerationRequest
 ): Promise<ProposalGenerationResponse> {
   if (isBackendAiConfigured) {
-    return aiBackendRequest<ProposalGenerationResponse, ProposalGenerationRequest>(
+    const response = await aiBackendRequest<ProposalGenerationResponse, ProposalGenerationRequest>(
       'generate-proposal',
       request
     );
+    recordAiRun({
+      workspaceId: request.workspaceId,
+      draft: response.result.draft,
+      operation: 'generate-proposal',
+      status: response.status,
+      promptContext: prepareProposalPromptContext(request),
+      resultSummary: summarizeReadiness(response.result.readiness),
+    }).catch((error) => {
+      console.warn('Unable to persist backend proposal generation run.', error);
+    });
+
+    return response;
   }
 
   const draft = await generateProposalDraft(request.profile, request.grant);
-  return {
+  const response: ProposalGenerationResponse = {
     mode: 'mock',
     status: 'completed',
     result: buildProposalGenerationResult(draft),
     generatedAt: new Date().toISOString(),
   };
+  recordAiRun({
+    workspaceId: request.workspaceId,
+    draft,
+    operation: 'generate-proposal',
+    status: response.status,
+    promptContext: prepareProposalPromptContext(request),
+    resultSummary: summarizeReadiness(response.result.readiness),
+  }).catch((error) => {
+    console.warn('Unable to persist mock proposal generation run.', error);
+  });
+
+  return response;
 }
 
 export async function requestProposalImprovement(
   request: ProposalImprovementRequest
 ): Promise<ProposalImprovementResponse> {
   if (isBackendAiConfigured) {
-    return aiBackendRequest<ProposalImprovementResponse, ProposalImprovementRequest>(
+    const response = await aiBackendRequest<ProposalImprovementResponse, ProposalImprovementRequest>(
       'improve-proposal',
       request
     );
+    recordAiRun({
+      workspaceId: request.workspaceId,
+      draft: response.draft ?? request.draft,
+      operation: 'improve-proposal',
+      status: response.status,
+      promptContext: { section: request.section },
+      resultSummary: response.improvedText ? 'Proposal section improved.' : 'Proposal improvement completed.',
+    }).catch((error) => {
+      console.warn('Unable to persist backend proposal improvement run.', error);
+    });
+
+    return response;
   }
 
   const improvedText = request.text
     ? improveProposalSectionMock(String(request.section ?? 'section'), request.text)
     : undefined;
 
-  return {
+  const response: ProposalImprovementResponse = {
     mode: 'mock',
     status: 'completed',
     draft: request.draft,
     improvedText,
     generatedAt: new Date().toISOString(),
   };
+  recordAiRun({
+    workspaceId: request.workspaceId,
+    draft: request.draft,
+    operation: 'improve-proposal',
+    status: response.status,
+    promptContext: { section: request.section },
+    resultSummary: improvedText ? 'Proposal section improved.' : 'Proposal improvement completed.',
+  }).catch((error) => {
+    console.warn('Unable to persist mock proposal improvement run.', error);
+  });
+
+  return response;
 }
 
 export async function requestProposalReadinessScore(
   request: ProposalReadinessRequest
 ): Promise<ProposalReadinessResponse> {
   if (isBackendAiConfigured) {
-    return aiBackendRequest<ProposalReadinessResponse, ProposalReadinessRequest>(
+    const response = await aiBackendRequest<ProposalReadinessResponse, ProposalReadinessRequest>(
       'score-proposal',
       request
     );
+    recordAiRun({
+      workspaceId: request.workspaceId,
+      draft: request.draft,
+      operation: 'score-proposal',
+      status: response.status,
+      resultSummary: summarizeReadiness(response.readiness),
+    }).catch((error) => {
+      console.warn('Unable to persist backend proposal readiness run.', error);
+    });
+
+    return response;
   }
 
-  return buildProposalReadinessResponse(request.draft);
+  const response = buildProposalReadinessResponse(request.draft);
+  recordAiRun({
+    workspaceId: request.workspaceId,
+    draft: request.draft,
+    operation: 'score-proposal',
+    status: response.status,
+    resultSummary: summarizeReadiness(response.readiness),
+  }).catch((error) => {
+    console.warn('Unable to persist mock proposal readiness run.', error);
+  });
+
+  return response;
 }
 
 export async function requestReviewerQuestions(
@@ -315,13 +401,14 @@ async function aiBackendRequest<TResponse, TBody>(path: string, body: TBody): Pr
   }
 
   const url = `${env.aiApiBaseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+  const token = await getSupabaseAccessToken();
 
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // TODO: Attach Supabase access token once Edge Functions are live.
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -342,6 +429,20 @@ async function aiBackendRequest<TResponse, TBody>(path: string, body: TBody): Pr
       error
     );
   }
+}
+
+async function getSupabaseAccessToken() {
+  if (!supabase) {
+    return undefined;
+  }
+
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error) {
+    return undefined;
+  }
+
+  return data.session?.access_token;
 }
 
 function deterministicVector(text: string) {

@@ -2,6 +2,7 @@
 
 ## Completed
 - Supabase Auth foundation.
+- Starter grant catalog Supabase read path and seed function.
 - Profiles and workspaces.
 - Workspace members basics.
 - Saved grants.
@@ -10,13 +11,20 @@
 - Application checklists.
 - Review comments.
 - Activity log.
+- Notification preferences.
+- Notification queue scaffolding.
+- Workspace preferences.
+- Application collaborators.
+- Workspace-aware reads for workspace-linked applications, proposals, comments, activity, members, and collaborators.
+- Match score persistence for Supabase-authenticated users.
+- Proposal generation, improvement, and review run persistence for Supabase-authenticated users.
+- AI History operations screen for persisted match scores and AI runs.
+- Subscription state read path for workspace subscription rows.
 
 ## Remaining
-- Collaborator assignments as a dedicated table.
-- Real grant ingestion.
-- Match score persistence integration.
-- Proposal generation run persistence integration.
-- Notification/workspace preferences full sync.
+- Automated external grant source ingestion beyond the starter seed catalog.
+- AI evaluation metrics and approval tooling.
+- Real notification delivery.
 - Subscriptions and entitlement enforcement.
 - Production monitoring and audit hardening.
 
@@ -41,11 +49,15 @@ Table access summary:
 - `workspaces`: authenticated users can select workspaces they own or belong to; owners/admins can update settings.
 - `workspace_members`: workspace members can read their workspace roster; owners/admins can add, update, or remove members.
 - `saved_grants`: remains user-scoped.
+- `grants`: authenticated users can read the catalog; writes should remain server-side through service-role Edge Functions.
 - `proposal_drafts`: owners can access their own drafts; workspace members can read workspace-linked drafts; owners/admins/researchers can update workspace-linked drafts.
 - `tracked_applications`: owners can access their own records; workspace members can read workspace-linked records; owners/admins/researchers can create/update workspace-linked records.
 - `application_checklists`: access follows the owning user or parent tracked application workspace.
+- `application_collaborators`: users can read their own collaborator assignments; workspace members can read workspace application collaborators; owners/admins/researchers can manage assignments.
 - `review_comments`: workspace members can read and add comments; users can delete their own comments; owners/admins can delete comments in their workspace.
 - `activity_log`: workspace members can read workspace activity and insert scoped activity; update/delete is intentionally not exposed.
+- `notification_preferences`: users can select, insert, update, and delete only their own notification preference row.
+- `notification_events`: users can manage their own in-app notification queue; workspace members can read workspace-scoped notification events.
 - `workspace_preferences`: owners/admins can update workspace settings; user-scoped rows remain owner-only.
 - `subscriptions`: workspace members can read subscription state; writes should happen only through trusted backend/payment webhook code.
 
@@ -63,6 +75,38 @@ Before production:
 
 ## Running SQL
 Open Supabase SQL Editor and run `supabase/schema.sql` after reviewing changes.
+
+Then seed the starter grant catalog by running:
+
+```text
+supabase/seed-grants.sql
+```
+
+The seed file upserts the current 20 curated mock grants into `public.grants` using `grant_external_id`, so it is safe to rerun. It ends with this verification query:
+
+```sql
+select count(*) as seeded_grant_count
+from public.grants
+where grant_external_id like 'grant-%';
+```
+
+Expected count: `20`.
+
+## Migration Test Path
+
+1. Log in with Supabase email/password.
+2. Confirm Explore/Matches loads grants from `public.grants` after running `supabase/seed-grants.sql`.
+3. Open Settings and change notification preferences.
+4. Change workspace name, currency, preferred regions, and review workflow preferences.
+5. Track an application, add a workspace member, and assign that member as a collaborator.
+6. Run Match Lab and open AI History.
+7. Open Notification Center and confirm in-app notification events are generated.
+8. Open Subscription and confirm subscription state reads from Supabase or clearly falls back to workspace plan state.
+9. Log out and log back in.
+10. Confirm grants, preferences, notification events, collaborator assignments, AI history, and subscription state reload from Supabase.
+11. Repeat with Demo Login to confirm local fallback still works without backend writes.
+
+Mock-only after this phase: real grants, grant ingestion, real AI calls, real email/push notification delivery, payments, production monitoring, and legal/store release workflows.
 
 ## Fallback
 If Supabase is missing or unavailable, the app continues with AsyncStorage and mock data.

@@ -35,6 +35,9 @@ export function requireAuth(request: Request) {
     );
   }
 
+  // TODO: Verify this Supabase JWT server-side before production use.
+  // TODO: Resolve the authenticated user id and enforce workspace authorization per request.
+  // TODO: Add rate limiting by user/workspace before real AI, ingestion, or notification delivery.
   return undefined;
 }
 

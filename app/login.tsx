@@ -13,14 +13,16 @@ import { getFriendlyErrorMessage } from '@/utils/errors';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { loginMock, loginWithEmail } = useGrantMatch();
+  const { loginMock, loginWithEmail, requestPasswordReset } = useGrantMatch();
   const [email, setEmail] = useState('demo@grantmatch.ai');
   const [password, setPassword] = useState('password');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState('');
+  const [messageTone, setMessageTone] = useState<'error' | 'info'>('error');
 
   async function handleLogin(demo = false) {
     setMessage('');
+    setMessageTone('error');
     setIsSubmitting(true);
 
     try {
@@ -30,6 +32,22 @@ export default function LoginScreen() {
         await loginWithEmail({ email, password });
       }
       router.replace('/dashboard');
+    } catch (error) {
+      setMessage(getFriendlyErrorMessage(error));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handlePasswordReset() {
+    setMessage('');
+    setMessageTone('error');
+    setIsSubmitting(true);
+
+    try {
+      await requestPasswordReset(email);
+      setMessageTone('info');
+      setMessage('Password reset email sent if this account exists in the configured Supabase project.');
     } catch (error) {
       setMessage(getFriendlyErrorMessage(error));
     } finally {
@@ -52,7 +70,9 @@ export default function LoginScreen() {
       </View>
 
       <AppCard style={styles.form}>
-        {message ? <Text style={styles.error}>{message}</Text> : null}
+        {message ? (
+          <Text style={messageTone === 'info' ? styles.info : styles.error}>{message}</Text>
+        ) : null}
 
         <Text style={styles.label}>Email</Text>
         <TextInput
@@ -80,6 +100,22 @@ export default function LoginScreen() {
           title={isSubmitting ? 'Signing In...' : 'Login'}
           onPress={() => handleLogin(false)}
         />
+        <View style={styles.secondaryActions}>
+          <AppButton
+            disabled={isSubmitting}
+            title="Create Supabase Account"
+            variant="secondary"
+            style={styles.actionButton}
+            onPress={() => router.push('/register')}
+          />
+          <AppButton
+            disabled={isSubmitting}
+            title="Reset Password"
+            variant="secondary"
+            style={styles.actionButton}
+            onPress={handlePasswordReset}
+          />
+        </View>
         <AppButton
           disabled={isSubmitting}
           title="Demo Login"
@@ -134,10 +170,28 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     padding: 12,
   },
+  info: {
+    backgroundColor: '#DBEAFE',
+    borderRadius: 12,
+    color: brand.colors.primary,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 20,
+    padding: 12,
+  },
   helper: {
     color: brand.colors.muted,
     fontSize: 13,
     lineHeight: 19,
+  },
+  secondaryActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  actionButton: {
+    flexBasis: 220,
+    flexGrow: 1,
   },
   footer: {
     flexDirection: 'row',

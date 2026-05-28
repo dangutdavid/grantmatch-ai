@@ -27,6 +27,8 @@ export default function RootLayout() {
           <Stack.Screen name="sync-center" options={{ title: 'Sync Center' }} />
           <Stack.Screen name="grant-sources" options={{ title: 'Grant Sources' }} />
           <Stack.Screen name="match-lab" options={{ title: 'Match Lab' }} />
+          <Stack.Screen name="ai-history" options={{ title: 'AI History' }} />
+          <Stack.Screen name="notification-center" options={{ title: 'Notification Center' }} />
           <Stack.Screen name="proposal-review" options={{ title: 'Proposal Review' }} />
           <Stack.Screen name="institution-admin" options={{ title: 'Institution Admin' }} />
           <Stack.Screen name="subscription" options={{ title: 'Subscription' }} />

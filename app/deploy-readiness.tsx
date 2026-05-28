@@ -37,8 +37,11 @@ const demoDeploymentSteps = [
   'Test core workflows',
 ];
 const remainingDataMigrations = [
-  'notification preferences',
-  'workspace preferences',
+  'real grants',
+  'grant ingestion',
+  'AI evaluation dashboards',
+  'payment webhooks',
+  'notification delivery',
 ];
 const backendMigrationStatus = [
   ['Auth', 'Migrated', 'Supabase', 'Harden auth flows and invite workflows.'],
@@ -52,15 +55,21 @@ const backendMigrationStatus = [
   ['Checklists', 'Migrated', 'Supabase', 'Checklist RLS follows owning user or parent application workspace.'],
   ['Review comments', 'Migrated', 'Supabase', 'Comment RLS drafted for workspace reads, member inserts, and scoped deletes.'],
   ['Activity log', 'Migrated', 'Supabase', 'Activity RLS drafted for workspace reads and inserts; client deletes are blocked.'],
-  ['Notification preferences', 'Local-only', 'AsyncStorage', 'Persist preferences to Supabase.'],
-  ['Subscription data', 'Backend-ready', 'Mock', 'Connect payments and entitlements.'],
+  ['Application collaborators', 'Migrated', 'Supabase', 'Collaborator assignments now persist with workspace-scoped RLS.'],
+  ['Notification preferences', 'Migrated', 'Supabase', 'Preference values persist to notification_preferences with local fallback.'],
+  ['Workspace preferences', 'Migrated', 'Supabase', 'Workspace settings persist to workspace_preferences and workspaces.'],
+  ['Notification queue', 'Backend-ready', 'Supabase read/write path', 'In-app notification events can persist; connect email/push providers later.'],
+  ['AI match scores', 'Migrated', 'Supabase', 'Match Lab can persist workspace-linked match scores for Supabase users.'],
+  ['AI run history', 'Migrated', 'Supabase', 'Proposal generation, improvement, and review runs can persist for Supabase users.'],
+  ['Workspace-aware collaboration reads', 'Migrated', 'Supabase', 'Workspace-linked records can be read by workspace members where RLS allows.'],
+  ['Subscription data', 'Backend-ready', 'Supabase read path', 'Subscription rows can be read; connect payment webhooks and entitlement enforcement.'],
   ['Production security review', 'Pending', 'Manual review', 'Review policies with two-user/two-workspace test cases before launch.'],
 ];
 const readinessSections = [
   ['Backend status', 'Core product records now have Supabase sync paths with local fallback.'],
-  ['AI status', 'Frontend mock AI is active; backend-only endpoint architecture is documented.'],
+  ['AI status', 'Frontend mock AI is active; backend-only endpoint architecture and history scaffolding are documented.'],
   ['Grant ingestion status', 'Mock grant sources and ingestion run architecture are in place.'],
-  ['Subscription/payment status', 'Plan comparison and usage warnings are mock-only; payments are not connected.'],
+  ['Subscription/payment status', 'Subscription state can be read from Supabase; payments and webhook enforcement are not connected.'],
   ['Deployment status', 'Expo validation and EAS/static web guidance are documented.'],
   ['Legal status', 'Privacy and Terms placeholders require legal review.'],
   ['QA status', 'Manual QA checklist exists in docs/QA_CHECKLIST.md.'],
@@ -142,9 +151,11 @@ export default function DeployReadinessScreen() {
           <AppButton title="Sync Center" variant="secondary" onPress={() => router.push('/sync-center')} />
           <AppButton title="Grant Sources" variant="secondary" onPress={() => router.push('/grant-sources')} />
           <AppButton title="Match Lab" variant="secondary" onPress={() => router.push('/match-lab')} />
+          <AppButton title="AI History" variant="secondary" onPress={() => router.push('/ai-history' as never)} />
           <AppButton title="Proposal Review" variant="secondary" onPress={() => router.push('/proposal-review')} />
           <AppButton title="Institution Admin" variant="secondary" onPress={() => router.push('/institution-admin')} />
           <AppButton title="Subscription" variant="secondary" onPress={() => router.push('/subscription')} />
+          <AppButton title="Notification Center" variant="secondary" onPress={() => router.push('/notification-center' as never)} />
           <AppButton title="Data Management" variant="secondary" onPress={() => router.push('/data-management')} />
           <AppButton title="Audit Log" variant="secondary" onPress={() => router.push('/audit-log')} />
         </View>
@@ -159,8 +170,9 @@ export default function DeployReadinessScreen() {
           {backendStatus.authMode}. Session source: {backendStatus.sessionSource}. Profile table
           integration and workspace table integration are active for Supabase sessions. Saved
           grants, proposal drafts, tracked applications, application checklists, review comments,
-          activity log, and workspace members have Supabase sync paths. Database schema draft:
-          available at supabase/schema.sql.
+          activity log, workspace members, notification preferences, workspace preferences,
+          application collaborators, match scores, and AI run history have Supabase sync paths.
+          Database schema draft: available at supabase/schema.sql.
         </Text>
         <Text style={styles.nextAction}>
           Remaining migrations pending: {remainingDataMigrations.join(', ')}.

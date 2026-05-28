@@ -23,10 +23,15 @@ export interface SyncEntityStatus {
     | 'reviewComments'
     | 'activityLog'
     | 'workspaceMembers'
+    | 'applicationCollaborators'
     | 'profile'
     | 'settings'
     | 'workspacePreferences'
-    | 'notificationPreferences';
+    | 'notificationPreferences'
+    | 'aiMatchScores'
+    | 'aiRunHistory'
+    | 'subscriptionState'
+    | 'notificationQueue';
   label: string;
   mode: SyncMode;
   status: SyncStatus;
@@ -50,6 +55,28 @@ export interface NotificationPreferences {
   savedGrantUpdates: boolean;
   weeklyDigest: boolean;
   teamActivityUpdates: boolean;
+}
+
+export type NotificationChannel = 'in_app' | 'email' | 'push';
+
+export type NotificationEventStatus = 'queued' | 'sent' | 'read' | 'failed';
+
+export interface NotificationEvent {
+  id: string;
+  type:
+    | 'deadline_reminder'
+    | 'proposal_review'
+    | 'saved_grant_update'
+    | 'weekly_digest'
+    | 'team_activity';
+  title: string;
+  message: string;
+  channel: NotificationChannel;
+  status: NotificationEventStatus;
+  relatedEntityId?: string;
+  createdAt: string;
+  scheduledFor?: string;
+  sentAt?: string;
 }
 
 export interface WorkspacePreferences {
@@ -152,6 +179,7 @@ export interface Grant {
   requiredDocuments: string[];
   topics: string[];
   sectors: string[];
+  sourceUrl?: string;
 }
 
 export interface Recommendation {
@@ -416,6 +444,25 @@ export interface SubscriptionFeature {
   id: string;
   label: string;
   included: boolean;
+}
+
+export type SubscriptionStatus =
+  | 'inactive'
+  | 'trialing'
+  | 'active'
+  | 'past_due'
+  | 'canceled'
+  | 'unconfigured';
+
+export interface SubscriptionState {
+  workspaceId: string;
+  plan: SubscriptionTier;
+  status: SubscriptionStatus;
+  providerCustomerId?: string;
+  providerSubscriptionId?: string;
+  currentPeriodEnd?: string;
+  source: 'Supabase' | 'Workspace' | 'Local fallback';
+  updatedAt?: string;
 }
 
 export interface UsageLimit {

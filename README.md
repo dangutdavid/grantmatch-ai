@@ -19,7 +19,7 @@ The app uses one TypeScript codebase for Expo Web, iOS, and Android. It is deplo
 - Privacy Policy and Terms of Service placeholder screens
 - Typed service layer and API client placeholder prepared for future backend replacement
 - EAS build profile scaffolding for future mobile builds
-- Sync Center, Grant Sources, Match Lab, Proposal Review Assistant, Institution Admin, Subscription, Data Management, and Audit Log production-readiness screens
+- Sync Center, Grant Sources, Match Lab, AI History, Notification Center, Proposal Review Assistant, Institution Admin, Subscription, Data Management, and Audit Log production-readiness screens
 
 ## Main Docs
 
@@ -31,9 +31,9 @@ The app uses one TypeScript codebase for Expo Web, iOS, and Android. It is deplo
 
 ## Current Backend Status
 
-Supabase-backed for authenticated users: auth foundation, profiles, workspaces, workspace members, saved grants, proposal drafts, tracked applications, checklists, review comments, and activity log. Local/demo fallback remains available through AsyncStorage and Demo Login.
+Supabase-backed for authenticated users: auth foundation, profiles, workspaces, workspace members, saved grants, proposal drafts, tracked applications, checklists, review comments, activity log, notification preferences, notification queue scaffolding, workspace preferences, application collaborators, match score persistence, AI run history scaffolding, and subscription state reads. Local/demo fallback remains available through AsyncStorage and Demo Login.
 
-Still mock/planned: real grant ingestion, real AI APIs, payments, notifications, collaborator assignment persistence, production monitoring, and final legal/store release work.
+Still mock/planned: real grant ingestion, real AI APIs, payment checkout/webhooks, real email/push notification delivery, production monitoring, and final legal/store release work.
 
 ## Secure AI Architecture
 
@@ -48,7 +48,7 @@ EXPO_PUBLIC_AI_API_BASE_URL=
 EXPO_PUBLIC_ENABLE_BACKEND_AI=false
 ```
 
-Planned backend endpoints are documented in `supabase/functions/README.md` and include `generate-proposal`, `improve-proposal`, `score-proposal`, `match-grants`, `explain-match`, `generate-review-questions`, and `ingest-grants`.
+Planned backend endpoints are documented in `supabase/functions/README.md` and include `generate-proposal`, `improve-proposal`, `score-proposal`, `match-grants`, `explain-match`, `generate-review-questions`, `ingest-grants`, and `seed-grants`.
 
 Safe mock Supabase Edge Function scaffolds now exist for those endpoints. They require a Supabase bearer token and return deterministic mock responses until backend secrets, rate limits, persistence, and real AI provider calls are configured.
 
@@ -70,11 +70,13 @@ AI production hardening still required:
 7. Track application
 8. Toggle checklist
 9. Add collaborator/comment
-10. Open Workspace
-11. Open Institution Admin
-12. Open Sync Center
-13. Open Deploy Readiness
-14. Reset demo data
+10. Open Match Lab and AI History
+11. Open Notification Center
+12. Open Workspace
+13. Open Institution Admin
+14. Open Sync Center
+15. Open Deploy Readiness
+16. Reset demo data
 
 ## Local Development
 
@@ -271,25 +273,67 @@ It includes tables for:
 - `proposal_drafts`
 - `tracked_applications`
 - `application_checklists`
+- `application_collaborators`
 - `review_comments`
 - `activity_log`
+- `notification_preferences`
+- `notification_events`
+- `workspace_preferences`
+- `grant_sources`
+- `grant_ingestion_runs`
+- `grant_match_scores`
+- `proposal_generation_runs`
 - `subscriptions`
+- `audit_events`
+- `user_feedback`
 
 To run it, open the Supabase SQL editor, review the file, then execute it in the project. RLS is enabled. The current active policies are narrowly scoped to the authenticated user's own profile, owned workspace/member records, saved grants, proposal drafts, tracked applications, checklist items, review comments, and activity log records. Workspace-linked records currently use `user_id` ownership; future production RLS should expand this to verified workspace membership.
+
+## Supabase Grant Seed SQL
+
+After running `supabase/schema.sql`, seed the starter grant catalog from:
+
+```text
+supabase/seed-grants.sql
+```
+
+Run it in the Supabase SQL Editor. It upserts the 20 curated starter grants into `public.grants` using `grant_external_id`, so it is safe to run more than once. The file ends with a verification query:
+
+```sql
+select count(*) as seeded_grant_count
+from public.grants
+where grant_external_id like 'grant-%';
+```
+
+Expected result after seeding:
+
+```text
+seeded_grant_count = 20
+```
+
+The app uses `services/grantService.ts` to read `public.grants` for Supabase sessions and falls back to local mock grants when Supabase is unavailable or the table is empty.
 
 Current Supabase-backed tables:
 
 - `profiles`
 - `workspaces`
 - `workspace_members`
+- `grants`
 - `saved_grants`
 - `proposal_drafts`
 - `tracked_applications`
 - `application_checklists`
 - `review_comments`
 - `activity_log`
+- `notification_preferences`
+- `notification_events`
+- `workspace_preferences`
+- `application_collaborators`
+- `grant_match_scores`
+- `proposal_generation_runs`
+- `subscriptions`
 
-Remaining migration work: real grant ingestion, AI matching/generation APIs, notifications, payments, production monitoring, and deeper workspace preference persistence. Keep `AsyncStorage` for temporary local preferences and mock/demo fallback.
+Remaining migration work: real grant ingestion beyond the starter seed catalog, AI matching/generation APIs, notification delivery, payments, production monitoring, and production-grade invite/role workflows. Keep `AsyncStorage` for temporary local preferences and mock/demo fallback.
 
 ## EAS Build Setup
 
@@ -313,6 +357,7 @@ The `services/` folder isolates future backend boundaries:
 - `proposalService.ts`: proposal draft generation and save helpers
 - `applicationService.ts`: tracked application, checklist, review comment, and activity log sync helpers
 - `workspaceService.ts`: Supabase-backed `getOrCreateWorkspace()`, `getWorkspaceMembers()`, member insert/update/remove helpers, and local fallback helpers
+- `preferenceService.ts`: Supabase-backed notification and workspace preference helpers
 - `aiService.ts`: AI proposal placeholder wrapper
 
 Screens and state can keep using local behavior now, then service internals can be swapped for Supabase table calls as each model migrates.
@@ -452,7 +497,7 @@ To test activity persistence:
 
 Workspace members now use `workspace_members.member_external_id` so the existing mock member IDs can remain stable in UI assignments. Supabase users load members from `workspace_members`, and Add Mock Member inserts a row when Supabase auth is active.
 
-Collaborator assignments are still stored locally for now, but the member records they reference can persist in Supabase. Activity records capture collaborator assignment events until a dedicated collaboration assignment table is added.
+Collaborator assignments now persist to `application_collaborators` for Supabase users. The table stores the local application external ID, member external ID, workspace ID, and role snapshot so Tracker assignments can reload after logout/login. Demo Login still stores assignments locally.
 
 To test member persistence:
 
@@ -461,6 +506,32 @@ To test member persistence:
 3. Tap `Add Mock Member`.
 4. Refresh the app and log back in.
 5. Confirm the member appears and can be assigned in Tracker.
+
+## Supabase Preferences Sync
+
+Notification preferences now sync to `notification_preferences` for Supabase users. Settings toggles remain optimistic in the UI; if a Supabase write fails, local state is preserved and a safe warning is logged.
+
+Workspace preferences now sync to `workspace_preferences`, while workspace name and organisation type are also reflected on the `workspaces` row. Demo Login continues to use local `AsyncStorage`.
+
+To test preferences:
+
+1. Log in with Supabase email/password.
+2. Open Settings.
+3. Change notification toggles, workspace name, default currency, preferred regions, and review workflow switches.
+4. Log out and log back in.
+5. Confirm the values reload from Supabase.
+
+## Supabase Application Collaborator Sync
+
+Tracker collaborator assignments now sync to `application_collaborators` for Supabase users. Workspace-scoped RLS allows workspace members to read collaborators for workspace applications, while Owner/Admin/Researcher roles can manage assignments.
+
+To test collaborator persistence:
+
+1. Log in with Supabase email/password.
+2. Track an application and add at least one workspace member.
+3. Assign the member as a collaborator from Tracker.
+4. Log out and log back in.
+5. Confirm the collaborator assignment still appears.
 
 ## Supabase Migration Test Checklist
 
@@ -476,9 +547,11 @@ To test member persistence:
 10. Toggle checklist items.
 11. Add a review comment.
 12. Add a workspace member.
-13. Refresh the browser or restart the app.
-14. Log in again.
-15. Confirm saved grants, drafts, tracker items, checklists, comments, activity, and members persist.
+13. Change notification and workspace preferences.
+14. Assign an application collaborator.
+15. Refresh the browser or restart the app.
+16. Log in again.
+17. Confirm saved grants, drafts, tracker items, checklists, comments, activity, members, preferences, and collaborators persist.
 
 ## Protected Route Behaviour
 
@@ -580,7 +653,7 @@ Phase 6: Add payment/subscription enforcement.
 - `id`, `workspace_id`, `user_id`, `member_external_id`, `email`, `name`, `role`, `organisation`, `avatar_initials`, `joined_date`, `created_at`, `updated_at`
 
 `grants`
-- `id`, `title`, `funder`, `description`, `eligibility`, `deadline`, `funding_amount`, `region_eligibility`, `required_documents`, `topics`, `sectors`, `source_url`, `created_at`, `updated_at`
+- `id`, `grant_external_id`, `title`, `funder`, `description`, `eligibility`, `deadline`, `funding_amount`, `region_eligibility`, `required_documents`, `topics`, `sectors`, `source_url`, `created_at`, `updated_at`
 
 `saved_grants`
 - `id`, `user_id`, `workspace_id`, `grant_id`, `created_at`
@@ -637,9 +710,10 @@ Phase 6: Add payment/subscription enforcement.
 - Proposal drafts sync to Supabase for Supabase users, with AsyncStorage fallback.
 - Tracked applications and checklist items sync to Supabase for Supabase users, with AsyncStorage fallback.
 - Review comments, activity log, and workspace members sync to Supabase for Supabase users, with AsyncStorage fallback.
+- Notification preferences, workspace preferences, and application collaborators sync to Supabase for Supabase users, with AsyncStorage fallback.
 - Proposal generation is deterministic mock text.
 - Data export summary does not download a real file.
-- Notifications, AI, payments, collaborator assignment persistence, real grant ingestion, and full production monitoring are not connected.
+- Real notification delivery, AI, payments, real grant ingestion, and full production monitoring are not connected.
 - Reset Demo Data clears local prototype data.
 - Backend connection is required for team production use.
 - Privacy Policy and Terms of Service are placeholders requiring review.

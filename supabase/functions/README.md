@@ -83,6 +83,16 @@ This folder now includes safe mock Edge Function scaffolds. They require an `Aut
 - Security notes: no scraping from the Expo client; source credentials stay server-side.
 - Scaffold: `ingest-grants/index.ts`
 
+## seed-grants
+
+- Purpose: Seed the `public.grants` table with the curated local starter grant catalog from `data/seedGrants.ts`.
+- Request: `{}`.
+- Response: `{ importedCount, grantExternalIds }`
+- Auth: requires a Supabase bearer token header and uses `SUPABASE_SERVICE_ROLE_KEY` inside the Edge Function.
+- Tables touched: `grants`.
+- Security notes: service-role key must be configured only as an Edge Function secret and never exposed to Expo.
+- Scaffold: `seed-grants/index.ts`
+
 ## Local Function Smoke Test
 
 After installing/configuring the Supabase CLI outside the Expo app:
@@ -114,6 +124,7 @@ supabase functions deploy improve-proposal
 supabase functions deploy score-proposal
 supabase functions deploy generate-review-questions
 supabase functions deploy ingest-grants
+supabase functions deploy seed-grants
 ```
 
 Real OpenAI integration should be added only inside these functions after setting backend secrets with the Supabase CLI. Never add provider secrets to `.env` values consumed by Expo.

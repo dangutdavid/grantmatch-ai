@@ -81,6 +81,9 @@ export default function SyncCenterScreen() {
         <Text style={styles.text}>Proposal generation: {backendStatus.isBackendAiConfigured ? 'Backend endpoint' : 'Mock fallback'}</Text>
         <Text style={styles.text}>Grant matching: {backendStatus.isBackendAiConfigured ? 'Backend endpoint' : 'Mock fallback'}</Text>
         <Text style={styles.text}>Review assistant: {backendStatus.isBackendAiConfigured ? 'Backend endpoint' : 'Mock fallback'}</Text>
+        <Text style={styles.text}>
+          Real notifications, payments, and grant ingestion: Not connected.
+        </Text>
         <Text style={styles.text}>Last refreshed: {formatLastSyncedAt(refreshedAt)}</Text>
       </AppCard>
 
@@ -116,7 +119,7 @@ export default function SyncCenterScreen() {
         {statuses.map((item) => (
           <AppCard key={item.entity} style={styles.item}>
             <Text style={styles.itemTitle}>{item.label}</Text>
-            <Text style={styles.badge}>{item.mode}</Text>
+            <Text style={styles.badge}>{getStorageLabel(item.entity, item.mode)}</Text>
             <Text style={styles.text}>{getSyncStatusMessage(item.status, item.mode)}</Text>
             <Text style={styles.meta}>Last synced: {formatLastSyncedAt(item.lastSyncedAt)}</Text>
             {item.warning ? <Text style={styles.warning}>{item.warning}</Text> : null}
@@ -126,11 +129,25 @@ export default function SyncCenterScreen() {
 
       <View style={styles.actions}>
         <AppButton title="Refresh Sync Status" onPress={handleRefreshSyncStatus} />
+        <AppButton title="Notification Center" variant="secondary" onPress={() => router.push('/notification-center' as never)} />
+        <AppButton title="AI History" variant="secondary" onPress={() => router.push('/ai-history' as never)} />
         <AppButton title="Deploy Readiness" variant="secondary" onPress={() => router.push('/deploy-readiness')} />
         <AppButton title="Settings" variant="secondary" onPress={() => router.push('/settings')} />
       </View>
     </ScreenContainer>
   );
+}
+
+function getStorageLabel(entity: string, mode: string) {
+  if (entity === 'settings') {
+    return 'Mock-only';
+  }
+
+  if (mode === 'Supabase') {
+    return 'Supabase';
+  }
+
+  return 'Local fallback';
 }
 
 function DiagnosticRow({ label, value }: { label: string; value: string }) {

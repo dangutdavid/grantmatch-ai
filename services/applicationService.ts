@@ -2,6 +2,7 @@ import { supabase } from '@/services/supabaseClient';
 import { createApplicationChecklist, getApplicationNextAction } from '@/utils/applications';
 import {
   ActivityLogItem,
+  ApplicationCollaborator,
   ApplicationChecklistItem,
   ApplicationStatus,
   Grant,
@@ -68,6 +69,14 @@ interface ActivityLogRow {
   created_at: string;
 }
 
+interface ApplicationCollaboratorRow {
+  id: string;
+  application_external_id: string | null;
+  member_external_id: string | null;
+  role: string | null;
+  created_at: string;
+}
+
 export interface ApplicationChecklistSyncRecord {
   applicationExternalId: string;
   item: ApplicationChecklistItem;
@@ -107,20 +116,26 @@ export async function updateApplicationStatusRecord(
 }
 
 export async function fetchTrackedApplications(
-  userId?: string
+  userId?: string,
+  workspaceId?: string
 ): Promise<TrackedApplication[] | undefined> {
   if (!supabase || !userId) {
     return undefined;
   }
 
-  const { data: applicationRows, error: applicationsError } = await supabase
+  let applicationsQuery = supabase
     .from('tracked_applications')
     .select(
       'id,application_external_id,grant_external_id,grant_title,funder,deadline,status,linked_proposal_draft_id,linked_proposal_draft_external_id,notes,next_action,updated_at'
     )
-    .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
-    .returns<TrackedApplicationRow[]>();
+    .order('updated_at', { ascending: false });
+
+  applicationsQuery = workspaceId
+    ? applicationsQuery.or(`user_id.eq.${userId},workspace_id.eq.${workspaceId}`)
+    : applicationsQuery.eq('user_id', userId);
+
+  const { data: applicationRows, error: applicationsError } =
+    await applicationsQuery.returns<TrackedApplicationRow[]>();
 
   if (applicationsError || !applicationRows) {
     return undefined;
@@ -131,7 +146,7 @@ export async function fetchTrackedApplications(
     .select(
       'id,tracked_application_id,application_external_id,checklist_external_id,title,completed,required,category,updated_at'
     )
-    .eq('user_id', userId)
+    .or(getChecklistFetchFilter(userId, applicationRows))
     .returns<ApplicationChecklistRow[]>();
 
   const checklistItemsByApplication = new Map<string, ApplicationChecklistItem[]>();
@@ -352,17 +367,25 @@ export async function fetchChecklistForApplication(
 export async function createChecklistItems(
   userId: string | undefined,
   applicationExternalId: string,
-  items: ApplicationChecklistItem[]
+  items: ApplicationChecklistItem[],
+  workspaceId?: string
 ): Promise<ApplicationChecklistItem[] | undefined> {
   if (!supabase || !userId) {
     return undefined;
   }
+
+  const trackedApplicationId = await fetchTrackedApplicationId(
+    userId,
+    applicationExternalId,
+    workspaceId
+  );
 
   const { data, error } = await supabase
     .from('application_checklists')
     .upsert(
       items.map((item) => ({
         user_id: userId,
+        tracked_application_id: trackedApplicationId,
         application_external_id: applicationExternalId,
         checklist_external_id: item.id,
         title: item.label,
@@ -422,17 +445,25 @@ export async function updateChecklistItem(
 export async function upsertChecklistItem(
   userId: string | undefined,
   applicationExternalId: string,
-  item: ApplicationChecklistItem
+  item: ApplicationChecklistItem,
+  workspaceId?: string
 ): Promise<ApplicationChecklistItem | undefined> {
   if (!supabase || !userId) {
     return undefined;
   }
+
+  const trackedApplicationId = await fetchTrackedApplicationId(
+    userId,
+    applicationExternalId,
+    workspaceId
+  );
 
   const { data, error } = await supabase
     .from('application_checklists')
     .upsert(
       {
         user_id: userId,
+        tracked_application_id: trackedApplicationId,
         application_external_id: applicationExternalId,
         checklist_external_id: item.id,
         title: item.label,
@@ -475,18 +506,23 @@ export async function deleteChecklistItem(
 }
 
 export async function fetchReviewComments(
-  userId?: string
+  userId?: string,
+  workspaceId?: string
 ): Promise<ReviewComment[] | undefined> {
   if (!supabase || !userId) {
     return undefined;
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('review_comments')
     .select('id,application_external_id,comment_external_id,member_external_id,commenter_name,commenter_role,comment,created_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .returns<ReviewCommentRow[]>();
+    .order('created_at', { ascending: false });
+
+  query = workspaceId
+    ? query.or(`user_id.eq.${userId},workspace_id.eq.${workspaceId}`)
+    : query.eq('user_id', userId);
+
+  const { data, error } = await query.returns<ReviewCommentRow[]>();
 
   if (error || !data) {
     return undefined;
@@ -574,17 +610,24 @@ export async function deleteReviewComment(
   return !error;
 }
 
-export async function fetchActivityLog(userId?: string): Promise<ActivityLogItem[] | undefined> {
+export async function fetchActivityLog(
+  userId?: string,
+  workspaceId?: string
+): Promise<ActivityLogItem[] | undefined> {
   if (!supabase || !userId) {
     return undefined;
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('activity_log')
     .select('id,activity_external_id,type,title,description,actor_name,related_entity_type,related_entity_external_id,metadata,message,created_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .returns<ActivityLogRow[]>();
+    .order('created_at', { ascending: false });
+
+  query = workspaceId
+    ? query.or(`user_id.eq.${userId},workspace_id.eq.${workspaceId}`)
+    : query.eq('user_id', userId);
+
+  const { data, error } = await query.returns<ActivityLogRow[]>();
 
   if (error || !data) {
     return undefined;
@@ -662,6 +705,87 @@ export async function fetchRecentActivity(
   return data.map(mapRowToActivityLogItem);
 }
 
+export async function fetchApplicationCollaborators(
+  userId?: string,
+  workspaceId?: string
+): Promise<ApplicationCollaborator[] | undefined> {
+  if (!supabase || !userId) {
+    return undefined;
+  }
+
+  let query = supabase
+    .from('application_collaborators')
+    .select('id,application_external_id,member_external_id,role,created_at')
+    .order('created_at', { ascending: false });
+
+  query = workspaceId
+    ? query.or(`user_id.eq.${userId},workspace_id.eq.${workspaceId}`)
+    : query.eq('user_id', userId);
+
+  const { data, error } = await query.returns<ApplicationCollaboratorRow[]>();
+
+  if (error || !data) {
+    return undefined;
+  }
+
+  return data.map(mapRowToApplicationCollaborator);
+}
+
+export async function assignApplicationCollaborator(
+  userId: string | undefined,
+  workspaceId: string | undefined,
+  applicationId: string,
+  member: WorkspaceMember
+): Promise<ApplicationCollaborator | undefined> {
+  if (!supabase || !userId || !workspaceId) {
+    return undefined;
+  }
+
+  const { data, error } = await supabase
+    .from('application_collaborators')
+    .upsert(
+      {
+        user_id: userId,
+        workspace_id: workspaceId,
+        application_external_id: applicationId,
+        member_external_id: member.id,
+        role: member.role,
+      },
+      { onConflict: 'workspace_id,application_external_id,member_external_id' }
+    )
+    .select('id,application_external_id,member_external_id,role,created_at')
+    .single<ApplicationCollaboratorRow>();
+
+  if (error || !data) {
+    throw createAppError(
+      'collaborator_sync_failed',
+      error?.message ?? 'Unable to sync application collaborator.'
+    );
+  }
+
+  return mapRowToApplicationCollaborator(data);
+}
+
+export async function removeApplicationCollaborator(
+  userId: string | undefined,
+  workspaceId: string | undefined,
+  applicationId: string,
+  memberId: string
+): Promise<boolean> {
+  if (!supabase || !userId || !workspaceId) {
+    return false;
+  }
+
+  const { error } = await supabase
+    .from('application_collaborators')
+    .delete()
+    .eq('workspace_id', workspaceId)
+    .eq('application_external_id', applicationId)
+    .eq('member_external_id', memberId);
+
+  return !error;
+}
+
 function mapRowToTrackedApplication(
   row: TrackedApplicationRow,
   checklistItems: ApplicationChecklistItem[]
@@ -679,6 +803,40 @@ function mapRowToTrackedApplication(
     updatedAt: row.updated_at,
     nextActionRecommendation: row.next_action?.recommendation ?? getApplicationNextAction(row.status),
   };
+}
+
+function getChecklistFetchFilter(userId: string, applicationRows: TrackedApplicationRow[]) {
+  const trackedApplicationIds = applicationRows.map((row) => row.id).filter(Boolean);
+
+  if (trackedApplicationIds.length === 0) {
+    return `user_id.eq.${userId}`;
+  }
+
+  return `user_id.eq.${userId},tracked_application_id.in.(${trackedApplicationIds.join(',')})`;
+}
+
+async function fetchTrackedApplicationId(
+  userId: string,
+  applicationExternalId: string,
+  workspaceId?: string
+) {
+  if (!supabase) {
+    return undefined;
+  }
+
+  let query = supabase
+    .from('tracked_applications')
+    .select('id')
+    .eq('application_external_id', applicationExternalId)
+    .limit(1);
+
+  query = workspaceId
+    ? query.or(`user_id.eq.${userId},workspace_id.eq.${workspaceId}`)
+    : query.eq('user_id', userId);
+
+  const { data } = await query.maybeSingle<{ id: string }>();
+
+  return data?.id;
 }
 
 function mapRowToChecklistItem(row: ApplicationChecklistRow): ApplicationChecklistItem {
@@ -707,6 +865,15 @@ function mapRowToActivityLogItem(row: ActivityLogRow): ActivityLogItem {
     action: row.type,
     message: row.message ?? row.description ?? row.title,
     createdAt: row.created_at,
+  };
+}
+
+function mapRowToApplicationCollaborator(row: ApplicationCollaboratorRow): ApplicationCollaborator {
+  return {
+    id: row.id,
+    applicationId: row.application_external_id ?? '',
+    memberId: row.member_external_id ?? '',
+    assignedAt: row.created_at,
   };
 }
 

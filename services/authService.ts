@@ -172,6 +172,45 @@ export async function loginDemo(): Promise<SessionUser> {
   return createMockSessionUser();
 }
 
+export async function sendPasswordResetEmail(email: string): Promise<void> {
+  if (!validateEmail(email)) {
+    throw createAppError('invalid_email', 'Enter a valid email address.');
+  }
+
+  if (!supabase && !supabaseStatus.isConfigured) {
+    throw createAppError(
+      'supabase_not_configured',
+      'Password reset requires Supabase Auth. Use Demo Login for local mode.'
+    );
+  }
+
+  if (!supabase) {
+    throw createSupabaseUnavailableError();
+  }
+
+  const redirectTo =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/login`
+      : undefined;
+
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+    redirectTo,
+  });
+
+  if (error) {
+    logSupabaseAuthError('password reset', error);
+
+    if (isSupabaseNetworkError(error)) {
+      throw createSupabaseUnavailableError(error);
+    }
+
+    throw createAppError(
+      'supabase_password_reset_failed',
+      getSupabaseAuthFailureMessage('login', error.message)
+    );
+  }
+}
+
 export async function registerMockUser(input: RegisterInput): Promise<SessionUser> {
   if (!input.fullName.trim()) {
     throw createAppError('missing_name', 'Enter your full name.');

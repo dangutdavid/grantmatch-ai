@@ -5,6 +5,7 @@ import { mockGrants, mockRecommendations } from '@/data/mockGrants';
 import { mockUser } from '@/data/mockUser';
 import { mockWorkspace, mockWorkspaceMembers } from '@/data/mockWorkspace';
 import {
+  fetchGrants,
   fetchSavedGrantIds,
   saveGrantForUser,
   unsaveGrantForUser,
@@ -16,19 +17,29 @@ import {
   logout as logoutAuth,
   registerMockUser,
   registerUser,
+  sendPasswordResetEmail,
 } from '@/services/authService';
 import { getProfile, mapSessionToProfileInput, upsertProfile } from '@/services/userService';
 import { fetchProposalDrafts, upsertProposalDraft } from '@/services/proposalService';
 import {
   addActivityLogItem as syncActivityLogItem,
+  assignApplicationCollaborator as syncApplicationCollaborator,
   addReviewComment as syncReviewComment,
   createChecklistItems,
   fetchActivityLog,
+  fetchApplicationCollaborators,
   fetchReviewComments,
   fetchTrackedApplications as fetchTrackedApplicationsFromSupabase,
+  removeApplicationCollaborator as syncRemoveApplicationCollaborator,
   upsertChecklistItem,
   upsertTrackedApplication,
 } from '@/services/applicationService';
+import {
+  fetchNotificationPreferences,
+  fetchWorkspacePreferences,
+  upsertNotificationPreferences,
+  upsertWorkspacePreferences,
+} from '@/services/preferenceService';
 import {
   addWorkspaceMember as syncWorkspaceMember,
   getOrCreateWorkspace,
@@ -122,6 +133,7 @@ interface GrantMatchContextValue extends PersistedGrantMatchState {
   registerMock: (input: RegisterInput) => Promise<void>;
   loginWithEmail: (credentials: LoginCredentials) => Promise<void>;
   registerWithEmail: (input: RegisterInput) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   logoutMock: () => Promise<void>;
   resetDemoData: () => void;
@@ -185,6 +197,7 @@ function createActivityLogItem(
 export function GrantMatchProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PersistedGrantMatchState>(initialState);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [grants, setGrants] = useState<Grant[]>(mockGrants);
 
   useEffect(() => {
     async function loadState() {
@@ -208,17 +221,28 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
             ? await fetchSavedGrantIds(supabaseSessionUser.id, supabaseWorkspace?.id)
             : undefined;
           const supabaseProposalDrafts = supabaseSessionUser
-            ? await fetchProposalDrafts(supabaseSessionUser.id)
+            ? await fetchProposalDrafts(supabaseSessionUser.id, supabaseWorkspace?.id)
             : undefined;
           const supabaseTrackedApplications = supabaseSessionUser
-            ? await fetchTrackedApplicationsFromSupabase(supabaseSessionUser.id)
+            ? await fetchTrackedApplicationsFromSupabase(supabaseSessionUser.id, supabaseWorkspace?.id)
+            : undefined;
+          const supabaseApplicationCollaborators = supabaseSessionUser
+            ? await fetchApplicationCollaborators(supabaseSessionUser.id, supabaseWorkspace?.id)
             : undefined;
           const supabaseReviewComments = supabaseSessionUser
-            ? await fetchReviewComments(supabaseSessionUser.id)
+            ? await fetchReviewComments(supabaseSessionUser.id, supabaseWorkspace?.id)
             : undefined;
           const supabaseActivityLog = supabaseSessionUser
-            ? await fetchActivityLog(supabaseSessionUser.id)
+            ? await fetchActivityLog(supabaseSessionUser.id, supabaseWorkspace?.id)
             : undefined;
+          const supabaseNotificationPreferences = supabaseSessionUser
+            ? await fetchNotificationPreferences(supabaseSessionUser.id)
+            : undefined;
+          const supabaseWorkspacePreferences =
+            supabaseSessionUser && supabaseWorkspace
+              ? await fetchWorkspacePreferences(supabaseWorkspace.id, supabaseSessionUser.id)
+              : undefined;
+          const supabaseGrants = supabaseSessionUser ? await fetchGrants() : undefined;
           setState({
             ...initialState,
             ...parsedState,
@@ -244,17 +268,26 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
               supabaseWorkspace ?? parsedState.currentWorkspace ?? initialState.currentWorkspace,
             workspaceMembers:
               supabaseWorkspaceMembers ?? parsedState.workspaceMembers ?? initialState.workspaceMembers,
-            applicationCollaborators: parsedState.applicationCollaborators ?? [],
+            applicationCollaborators:
+              supabaseApplicationCollaborators ?? parsedState.applicationCollaborators ?? [],
             reviewComments: supabaseReviewComments ?? parsedState.reviewComments ?? [],
             activityLog: supabaseActivityLog ?? parsedState.activityLog ?? [],
             notificationPreferences:
               {
                 ...initialState.notificationPreferences,
                 ...(parsedState.notificationPreferences ?? {}),
+                ...(supabaseNotificationPreferences ?? {}),
               },
             workspacePreferences: {
               ...initialState.workspacePreferences,
               ...(parsedState.workspacePreferences ?? {}),
+              ...(supabaseWorkspace
+                ? {
+                    workspaceName: supabaseWorkspace.name,
+                    organisationType: supabaseWorkspace.organisationType,
+                  }
+                : {}),
+              ...(supabaseWorkspacePreferences ?? {}),
             },
             hasCompletedOnboarding: parsedState.hasCompletedOnboarding ?? false,
             onboardingAnswers: parsedState.onboardingAnswers,
@@ -265,6 +298,9 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
               parsedState.isAuthenticated ||
               Boolean(parsedState.sessionUser),
           });
+          if (supabaseGrants && supabaseGrants.length > 0) {
+            setGrants(supabaseGrants);
+          }
         } else {
           const supabaseSessionUser = await getCurrentSession();
 
@@ -278,12 +314,34 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
               supabaseSessionUser.id,
               supabaseWorkspace.id
             );
-            const supabaseProposalDrafts = await fetchProposalDrafts(supabaseSessionUser.id);
+            const supabaseProposalDrafts = await fetchProposalDrafts(
+              supabaseSessionUser.id,
+              supabaseWorkspace.id
+            );
             const supabaseTrackedApplications = await fetchTrackedApplicationsFromSupabase(
+              supabaseSessionUser.id,
+              supabaseWorkspace.id
+            );
+            const supabaseApplicationCollaborators = await fetchApplicationCollaborators(
+              supabaseSessionUser.id,
+              supabaseWorkspace.id
+            );
+            const supabaseReviewComments = await fetchReviewComments(
+              supabaseSessionUser.id,
+              supabaseWorkspace.id
+            );
+            const supabaseActivityLog = await fetchActivityLog(
+              supabaseSessionUser.id,
+              supabaseWorkspace.id
+            );
+            const supabaseNotificationPreferences = await fetchNotificationPreferences(
               supabaseSessionUser.id
             );
-            const supabaseReviewComments = await fetchReviewComments(supabaseSessionUser.id);
-            const supabaseActivityLog = await fetchActivityLog(supabaseSessionUser.id);
+            const supabaseWorkspacePreferences = await fetchWorkspacePreferences(
+              supabaseWorkspace.id,
+              supabaseSessionUser.id
+            );
+            const supabaseGrantsElse = await fetchGrants();
 
             setState((currentState) => ({
               ...currentState,
@@ -295,11 +353,26 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
               proposalDrafts: supabaseProposalDrafts ?? currentState.proposalDrafts,
               trackedApplications:
                 supabaseTrackedApplications ?? currentState.trackedApplications,
+              applicationCollaborators:
+                supabaseApplicationCollaborators ?? currentState.applicationCollaborators,
               reviewComments: supabaseReviewComments ?? currentState.reviewComments,
               activityLog: supabaseActivityLog ?? currentState.activityLog,
               currentWorkspace: supabaseWorkspace,
               workspaceMembers: supabaseWorkspaceMembers,
+              notificationPreferences: {
+                ...currentState.notificationPreferences,
+                ...(supabaseNotificationPreferences ?? {}),
+              },
+              workspacePreferences: {
+                ...currentState.workspacePreferences,
+                workspaceName: supabaseWorkspace.name,
+                organisationType: supabaseWorkspace.organisationType,
+                ...(supabaseWorkspacePreferences ?? {}),
+              },
             }));
+            if (supabaseGrantsElse.length > 0) {
+              setGrants(supabaseGrantsElse);
+            }
           }
         }
       } catch (error) {
@@ -337,7 +410,12 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    createChecklistItems(state.sessionUser.id, application.id, application.checklistItems).catch((error) => {
+    createChecklistItems(
+      state.sessionUser.id,
+      application.id,
+      application.checklistItems,
+      state.currentWorkspace.id
+    ).catch((error) => {
       console.warn('Unable to sync application checklist.', error);
     });
   };
@@ -376,9 +454,9 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       isLoaded,
-      grants: mockGrants,
+      grants,
       recommendations: mockRecommendations,
-      getGrantById: (grantId) => mockGrants.find((grant) => grant.id === grantId),
+      getGrantById: (grantId) => grants.find((grant) => grant.id === grantId),
       getRecommendationByGrantId: (grantId) =>
         mockRecommendations.find((recommendation) => recommendation.grantId === grantId),
       selectGrant: (grantId) => {
@@ -427,7 +505,7 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
         }));
       },
       createDraftFromGrant: (grantId) => {
-        const grant = mockGrants.find((item) => item.id === grantId);
+        const grant = grants.find((item) => item.id === grantId);
 
         if (!grant) {
           return undefined;
@@ -501,7 +579,7 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
         }));
       },
       createTrackedApplication: (grantId, linkedProposalDraftId) => {
-        const grant = mockGrants.find((item) => item.id === grantId);
+        const grant = grants.find((item) => item.id === grantId);
 
         if (!grant) {
           return undefined;
@@ -680,7 +758,12 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
           : undefined;
 
         if (state.sessionUser?.authMode === 'supabase' && updatedChecklistItem) {
-          upsertChecklistItem(state.sessionUser.id, applicationId, updatedChecklistItem).catch((error) => {
+          upsertChecklistItem(
+            state.sessionUser.id,
+            applicationId,
+            updatedChecklistItem,
+            state.currentWorkspace.id
+          ).catch((error) => {
             console.warn('Unable to sync checklist item.', error);
           });
         }
@@ -797,16 +880,28 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
           }
 
           const member = currentState.workspaceMembers.find((item) => item.id === memberId);
+          const collaborator: ApplicationCollaborator = {
+            id: `collaborator-${Date.now()}`,
+            applicationId,
+            memberId,
+            assignedAt: new Date().toISOString(),
+          };
+
+          if (currentState.sessionUser?.authMode === 'supabase' && member) {
+            syncApplicationCollaborator(
+              currentState.sessionUser.id,
+              currentState.currentWorkspace.id,
+              applicationId,
+              member
+            ).catch((error) => {
+              console.warn('Unable to sync application collaborator.', error);
+            });
+          }
 
           return {
             ...currentState,
             applicationCollaborators: [
-              {
-                id: `collaborator-${Date.now()}`,
-                applicationId,
-                memberId,
-                assignedAt: new Date().toISOString(),
-              },
+              collaborator,
               ...currentState.applicationCollaborators,
             ],
             activityLog: [
@@ -822,13 +917,30 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
         });
       },
       removeCollaboratorFromApplication: (applicationId, memberId) => {
-        setState((currentState) => ({
-          ...currentState,
-          applicationCollaborators: currentState.applicationCollaborators.filter(
-            (collaborator) =>
-              !(collaborator.applicationId === applicationId && collaborator.memberId === memberId)
-          ),
-        }));
+        setState((currentState) => {
+          if (currentState.sessionUser?.authMode === 'supabase') {
+            syncRemoveApplicationCollaborator(
+              currentState.sessionUser.id,
+              currentState.currentWorkspace.id,
+              applicationId,
+              memberId
+            ).then((didRemove) => {
+              if (!didRemove) {
+                console.warn('Unable to remove application collaborator from Supabase.');
+              }
+            }).catch((error) => {
+              console.warn('Unable to remove application collaborator.', error);
+            });
+          }
+
+          return {
+            ...currentState,
+            applicationCollaborators: currentState.applicationCollaborators.filter(
+              (collaborator) =>
+                !(collaborator.applicationId === applicationId && collaborator.memberId === memberId)
+            ),
+          };
+        });
       },
       addReviewComment: (applicationId, memberId, comment) => {
         const trimmedComment = comment.trim();
@@ -875,13 +987,23 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
       toggleNotificationPreference: (key) => {
         setState((currentState) => {
           const nextValue = !currentState.notificationPreferences[key];
+          const nextNotificationPreferences = {
+            ...currentState.notificationPreferences,
+            [key]: nextValue,
+          };
+
+          if (currentState.sessionUser?.authMode === 'supabase') {
+            upsertNotificationPreferences(
+              currentState.sessionUser.id,
+              nextNotificationPreferences
+            ).catch((error) => {
+              console.warn('Unable to sync notification preferences.', error);
+            });
+          }
 
           return {
             ...currentState,
-            notificationPreferences: {
-              ...currentState.notificationPreferences,
-              [key]: nextValue,
-            },
+            notificationPreferences: nextNotificationPreferences,
             activityLog: [
               createSyncedActivityLogItem(
                 'settings_updated',
@@ -893,13 +1015,12 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
         });
       },
       updateWorkspacePreference: (field, value) => {
-        setState((currentState) => ({
-          ...currentState,
-          workspacePreferences: {
+        setState((currentState) => {
+          const nextWorkspacePreferences = {
             ...currentState.workspacePreferences,
             [field]: value,
-          },
-          currentWorkspace:
+          };
+          const nextWorkspace =
             field === 'workspaceName' || field === 'organisationType'
               ? {
                   ...currentState.currentWorkspace,
@@ -912,12 +1033,32 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
                       ? String(value).trim() || currentState.currentWorkspace.organisationType
                       : currentState.currentWorkspace.organisationType,
                 }
-              : currentState.currentWorkspace,
-          activityLog: [
-            createSyncedActivityLogItem('settings_updated', `Workspace preference updated: ${field}`),
-            ...currentState.activityLog,
-          ],
-        }));
+              : currentState.currentWorkspace;
+
+          if (currentState.sessionUser?.authMode === 'supabase') {
+            upsertWorkspacePreferences(
+              nextWorkspace.id,
+              currentState.sessionUser.id,
+              {
+                ...nextWorkspacePreferences,
+                workspaceName: nextWorkspace.name,
+                organisationType: nextWorkspace.organisationType,
+              }
+            ).catch((error) => {
+              console.warn('Unable to sync workspace preferences.', error);
+            });
+          }
+
+          return {
+            ...currentState,
+            workspacePreferences: nextWorkspacePreferences,
+            currentWorkspace: nextWorkspace,
+            activityLog: [
+              createSyncedActivityLogItem('settings_updated', `Workspace preference updated: ${field}`),
+              ...currentState.activityLog,
+            ],
+          };
+        });
       },
       recordDataExport: () => {
         setState((currentState) => ({
@@ -969,6 +1110,23 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
                 name: answers.organisationName.trim() || state.currentWorkspace.name,
                 organisationType: answers.userType,
               };
+        const nextWorkspacePreferences = {
+          ...state.workspacePreferences,
+          workspaceName: answers.organisationName.trim() || state.workspacePreferences.workspaceName,
+          organisationType: answers.userType,
+          preferredFundingRegions:
+            answers.countryRegion.trim() || state.workspacePreferences.preferredFundingRegions,
+        };
+
+        if (state.sessionUser?.authMode === 'supabase') {
+          upsertWorkspacePreferences(
+            savedWorkspace.id,
+            state.sessionUser.id,
+            nextWorkspacePreferences
+          ).catch((error) => {
+            console.warn('Unable to sync onboarding workspace preferences.', error);
+          });
+        }
 
         setState((currentState) => {
           return {
@@ -977,13 +1135,7 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
             onboardingAnswers: answers,
             currentUser: savedProfile,
             currentWorkspace: savedWorkspace,
-            workspacePreferences: {
-              ...currentState.workspacePreferences,
-              workspaceName: answers.organisationName.trim() || currentState.workspacePreferences.workspaceName,
-              organisationType: answers.userType,
-              preferredFundingRegions:
-                answers.countryRegion.trim() || currentState.workspacePreferences.preferredFundingRegions,
-            },
+            workspacePreferences: nextWorkspacePreferences,
             activityLog: [
               createSyncedActivityLogItem('settings_updated', 'Onboarding completed'),
               ...currentState.activityLog,
@@ -1083,10 +1235,23 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
         const syncedWorkspace = await getOrCreateWorkspace(sessionUser);
         const syncedWorkspaceMembers = await getWorkspaceMembers(syncedWorkspace.id);
         const syncedSavedGrantIds = await fetchSavedGrantIds(sessionUser.id, syncedWorkspace.id);
-        const syncedProposalDrafts = await fetchProposalDrafts(sessionUser.id);
-        const syncedTrackedApplications = await fetchTrackedApplicationsFromSupabase(sessionUser.id);
-        const syncedReviewComments = await fetchReviewComments(sessionUser.id);
-        const syncedActivityLog = await fetchActivityLog(sessionUser.id);
+        const syncedProposalDrafts = await fetchProposalDrafts(sessionUser.id, syncedWorkspace.id);
+        const syncedTrackedApplications = await fetchTrackedApplicationsFromSupabase(
+          sessionUser.id,
+          syncedWorkspace.id
+        );
+        const syncedApplicationCollaborators = await fetchApplicationCollaborators(
+          sessionUser.id,
+          syncedWorkspace.id
+        );
+        const syncedReviewComments = await fetchReviewComments(sessionUser.id, syncedWorkspace.id);
+        const syncedActivityLog = await fetchActivityLog(sessionUser.id, syncedWorkspace.id);
+        const syncedNotificationPreferences = await fetchNotificationPreferences(sessionUser.id);
+        const syncedWorkspacePreferences = await fetchWorkspacePreferences(
+          syncedWorkspace.id,
+          sessionUser.id
+        );
+        const syncedGrants = await fetchGrants();
 
         setState((currentState) => ({
           ...currentState,
@@ -1098,13 +1263,20 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
           proposalDrafts: syncedProposalDrafts ?? currentState.proposalDrafts,
           trackedApplications:
             syncedTrackedApplications ?? currentState.trackedApplications,
+          applicationCollaborators:
+            syncedApplicationCollaborators ?? currentState.applicationCollaborators,
           reviewComments: syncedReviewComments ?? currentState.reviewComments,
           currentWorkspace: syncedWorkspace,
           workspaceMembers: syncedWorkspaceMembers,
+          notificationPreferences: {
+            ...currentState.notificationPreferences,
+            ...(syncedNotificationPreferences ?? {}),
+          },
           workspacePreferences: {
             ...currentState.workspacePreferences,
             workspaceName: syncedWorkspace.name,
             organisationType: syncedWorkspace.organisationType,
+            ...(syncedWorkspacePreferences ?? {}),
           },
           activityLog: [
             createSyncedActivityLogItem(
@@ -1114,6 +1286,7 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
             ...(syncedActivityLog ?? currentState.activityLog),
           ],
         }));
+        if (syncedGrants.length > 0) setGrants(syncedGrants);
       },
       registerWithEmail: async (input) => {
         const sessionUser = await registerUser(input);
@@ -1133,10 +1306,23 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
         const syncedWorkspace = await getOrCreateWorkspace(sessionUser);
         const syncedWorkspaceMembers = await getWorkspaceMembers(syncedWorkspace.id);
         const syncedSavedGrantIds = await fetchSavedGrantIds(sessionUser.id, syncedWorkspace.id);
-        const syncedProposalDrafts = await fetchProposalDrafts(sessionUser.id);
-        const syncedTrackedApplications = await fetchTrackedApplicationsFromSupabase(sessionUser.id);
-        const syncedReviewComments = await fetchReviewComments(sessionUser.id);
-        const syncedActivityLog = await fetchActivityLog(sessionUser.id);
+        const syncedProposalDrafts = await fetchProposalDrafts(sessionUser.id, syncedWorkspace.id);
+        const syncedTrackedApplications = await fetchTrackedApplicationsFromSupabase(
+          sessionUser.id,
+          syncedWorkspace.id
+        );
+        const syncedApplicationCollaborators = await fetchApplicationCollaborators(
+          sessionUser.id,
+          syncedWorkspace.id
+        );
+        const syncedReviewComments = await fetchReviewComments(sessionUser.id, syncedWorkspace.id);
+        const syncedActivityLog = await fetchActivityLog(sessionUser.id, syncedWorkspace.id);
+        const syncedNotificationPreferences = await fetchNotificationPreferences(sessionUser.id);
+        const syncedWorkspacePreferences = await fetchWorkspacePreferences(
+          syncedWorkspace.id,
+          sessionUser.id
+        );
+        const syncedGrantsReg = await fetchGrants();
 
         setState((currentState) => {
           return {
@@ -1149,13 +1335,20 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
             proposalDrafts: syncedProposalDrafts ?? currentState.proposalDrafts,
             trackedApplications:
               syncedTrackedApplications ?? currentState.trackedApplications,
+            applicationCollaborators:
+              syncedApplicationCollaborators ?? currentState.applicationCollaborators,
             reviewComments: syncedReviewComments ?? currentState.reviewComments,
             currentWorkspace: syncedWorkspace,
             workspaceMembers: syncedWorkspaceMembers,
+            notificationPreferences: {
+              ...currentState.notificationPreferences,
+              ...(syncedNotificationPreferences ?? {}),
+            },
             workspacePreferences: {
               ...currentState.workspacePreferences,
               workspaceName: syncedWorkspace.name,
               organisationType: syncedWorkspace.organisationType,
+              ...(syncedWorkspacePreferences ?? {}),
             },
             activityLog: [
               createSyncedActivityLogItem(
@@ -1166,6 +1359,10 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
             ],
           };
         });
+        if (syncedGrantsReg.length > 0) setGrants(syncedGrantsReg);
+      },
+      requestPasswordReset: async (email) => {
+        await sendPasswordResetEmail(email);
       },
       logout: async () => {
         const previousAuthMode = state.authMode;
@@ -1235,7 +1432,8 @@ export function GrantMatchProvider({ children }: { children: ReactNode }) {
         });
       },
     }),
-    [isLoaded, state]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isLoaded, state, grants]
   );
 
   return <GrantMatchContext.Provider value={value}>{children}</GrantMatchContext.Provider>;

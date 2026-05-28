@@ -13,6 +13,9 @@
 - Profile is prefilled from onboarding answers.
 
 ## Grants
+- Run `supabase/schema.sql`, then `supabase/seed-grants.sql`.
+- Verify the seed query returns `seeded_grant_count = 20`.
+- Log in with Supabase email/password and confirm grants load from Supabase.
 - View recommendations.
 - Save a grant.
 - Unsave a grant.

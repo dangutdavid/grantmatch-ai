@@ -42,17 +42,24 @@ export async function saveProposalDraft(
   return [savedDraft, ...existingDrafts.filter((item) => item.id !== savedDraft.id)];
 }
 
-export async function fetchProposalDrafts(userId?: string): Promise<ProposalDraft[] | undefined> {
+export async function fetchProposalDrafts(
+  userId?: string,
+  workspaceId?: string
+): Promise<ProposalDraft[] | undefined> {
   if (!supabase || !userId) {
     return undefined;
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('proposal_drafts')
     .select('id,draft_external_id,grant_external_id,title,status,sections,updated_at')
-    .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
-    .returns<ProposalDraftRow[]>();
+    .order('updated_at', { ascending: false });
+
+  query = workspaceId
+    ? query.or(`user_id.eq.${userId},workspace_id.eq.${workspaceId}`)
+    : query.eq('user_id', userId);
+
+  const { data, error } = await query.returns<ProposalDraftRow[]>();
 
   if (error || !data) {
     return undefined;

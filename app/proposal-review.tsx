@@ -22,7 +22,7 @@ import {
 
 export default function ProposalReviewScreen() {
   const router = useRouter();
-  const { proposalDrafts, saveDraft } = useGrantMatch();
+  const { currentWorkspace, proposalDrafts, saveDraft } = useGrantMatch();
   const [selectedDraftId, setSelectedDraftId] = useState(proposalDrafts[0]?.id);
   const [reviewedAt, setReviewedAt] = useState(new Date().toISOString());
   const selectedDraft = proposalDrafts.find((draft) => draft.id === selectedDraftId);
@@ -35,7 +35,10 @@ export default function ProposalReviewScreen() {
   }
 
   async function runMockReview() {
-    await requestProposalReadinessScore({ draft: selectedDraft });
+    await requestProposalReadinessScore({
+      draft: selectedDraft,
+      workspaceId: currentWorkspace.id,
+    });
     setReviewedAt(new Date().toISOString());
   }
 

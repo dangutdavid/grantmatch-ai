@@ -234,6 +234,9 @@ export default function SettingsScreen() {
             'Comments',
             'Activity',
             'Workspace members',
+            'Application collaborators',
+            'Workspace preferences',
+            'Notification preferences',
           ].map((label) => (
             <View key={label} style={styles.syncItem}>
               <Text style={styles.syncLabel}>{label}</Text>
@@ -260,7 +263,9 @@ export default function SettingsScreen() {
       <AppCard style={styles.sectionCard}>
         <Text style={styles.cardTitle}>Workspace preferences</Text>
         <Text style={styles.itemDescription}>
-          Saved locally now. These values prepare the app for future workspace settings in a backend.
+          {backendStatus.isSupabaseSession
+            ? 'Saved to Supabase for this workspace, with local fallback kept responsive.'
+            : 'Stored locally for Demo Login until Supabase email auth is active.'}
         </Text>
 
         <SettingInput
@@ -336,7 +341,9 @@ export default function SettingsScreen() {
       <AppCard style={styles.sectionCard}>
         <Text style={styles.cardTitle}>Notification preferences</Text>
         <Text style={styles.itemDescription}>
-          These switches are stored locally only. No email, push, or in-app notification service is connected.
+          {backendStatus.isSupabaseSession
+            ? 'Preference values persist in Supabase. Real email, push, and in-app delivery are not connected yet.'
+            : 'These switches stay in local demo storage. No email, push, or in-app notification service is connected.'}
         </Text>
         <View style={styles.divider} />
         {notificationOptions.map((option) => (
@@ -384,8 +391,10 @@ export default function SettingsScreen() {
         <View style={styles.actions}>
           <AppButton title="Subscription" variant="secondary" onPress={() => router.push('/subscription')} />
           <AppButton title="Data Management" variant="secondary" onPress={() => router.push('/data-management')} />
+          <AppButton title="Notification Center" variant="secondary" onPress={() => router.push('/notification-center' as never)} />
           <AppButton title="Grant Sources" variant="secondary" onPress={() => router.push('/grant-sources')} />
           <AppButton title="Match Lab" variant="secondary" onPress={() => router.push('/match-lab')} />
+          <AppButton title="AI History" variant="secondary" onPress={() => router.push('/ai-history' as never)} />
           <AppButton title="Proposal Review Assistant" variant="secondary" onPress={() => router.push('/proposal-review')} />
           <AppButton title="Institution Admin" variant="secondary" onPress={() => router.push('/institution-admin')} />
         </View>

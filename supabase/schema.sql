@@ -64,6 +64,7 @@ create table if not exists public.workspace_members (
 
 create table if not exists public.grants (
   id uuid primary key default gen_random_uuid(),
+  grant_external_id text unique,
   title text not null,
   funder text not null,
   description text not null,
@@ -88,6 +89,9 @@ create table if not exists public.saved_grants (
   created_at timestamptz not null default now(),
   unique (user_id, grant_external_id)
 );
+
+alter table public.grants
+  add column if not exists grant_external_id text;
 
 create table if not exists public.proposal_drafts (
   id uuid primary key default gen_random_uuid(),
@@ -144,6 +148,20 @@ create table if not exists public.application_checklists (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, application_external_id, checklist_external_id)
+);
+
+create table if not exists public.application_collaborators (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid references public.workspaces(id) on delete cascade,
+  tracked_application_id uuid references public.tracked_applications(id) on delete cascade,
+  application_external_id text,
+  workspace_member_id uuid references public.workspace_members(id) on delete set null,
+  member_external_id text,
+  role text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (workspace_id, application_external_id, member_external_id)
 );
 
 create table if not exists public.review_comments (
@@ -226,6 +244,7 @@ create table if not exists public.grant_ingestion_runs (
 create table if not exists public.grant_match_scores (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid references public.workspaces(id) on delete cascade,
   grant_external_id text not null,
   confidence_score integer not null default 0,
   signals jsonb not null default '[]'::jsonb,
@@ -240,7 +259,9 @@ create table if not exists public.proposal_generation_runs (
   user_id uuid not null references auth.users(id) on delete cascade,
   workspace_id uuid references public.workspaces(id) on delete cascade,
   draft_external_id text,
-  status text not null default 'Completed',
+  status text not null default 'Completed' check (
+    status in ('Idle', 'Running', 'Completed', 'Failed', 'Unavailable')
+  ),
   prompt_context jsonb,
   result_summary text,
   created_at timestamptz not null default now(),
@@ -257,6 +278,33 @@ create table if not exists public.notification_preferences (
   team_activity_updates boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.notification_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid references public.workspaces(id) on delete cascade,
+  notification_external_id text not null,
+  notification_type text not null check (
+    notification_type in (
+      'deadline_reminder',
+      'proposal_review',
+      'saved_grant_update',
+      'weekly_digest',
+      'team_activity'
+    )
+  ),
+  title text not null,
+  message text not null,
+  channel text not null default 'in_app' check (channel in ('in_app', 'email', 'push')),
+  status text not null default 'queued' check (status in ('queued', 'sent', 'read', 'failed')),
+  related_entity_external_id text,
+  scheduled_for timestamptz,
+  sent_at timestamptz,
+  metadata jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, notification_external_id)
 );
 
 create table if not exists public.workspace_preferences (
@@ -388,6 +436,9 @@ alter table public.activity_log
   alter column title set not null,
   alter column description set not null;
 
+alter table public.grant_match_scores
+  add column if not exists workspace_id uuid references public.workspaces(id) on delete cascade;
+
 create index if not exists profiles_user_id_idx on public.profiles(user_id);
 create index if not exists workspaces_owner_user_id_idx on public.workspaces(owner_user_id);
 create index if not exists workspace_members_workspace_id_idx on public.workspace_members(workspace_id);
@@ -395,6 +446,7 @@ create index if not exists workspace_members_user_id_idx on public.workspace_mem
 create index if not exists workspace_members_email_idx on public.workspace_members(email);
 create index if not exists workspace_members_role_idx on public.workspace_members(role);
 create index if not exists grants_deadline_idx on public.grants(deadline);
+create unique index if not exists grants_external_id_unique_idx on public.grants(grant_external_id);
 create index if not exists grants_topics_idx on public.grants using gin(topics);
 create index if not exists grants_sectors_idx on public.grants using gin(sectors);
 create index if not exists saved_grants_user_id_idx on public.saved_grants(user_id);
@@ -420,6 +472,13 @@ create index if not exists application_checklists_external_application_idx on pu
 create index if not exists application_checklists_external_item_idx on public.application_checklists(checklist_external_id);
 create index if not exists application_checklists_category_idx on public.application_checklists(category);
 create index if not exists application_checklists_completed_idx on public.application_checklists(completed);
+create unique index if not exists application_collaborators_workspace_application_member_unique_idx on public.application_collaborators(workspace_id, application_external_id, member_external_id);
+create index if not exists application_collaborators_user_id_idx on public.application_collaborators(user_id);
+create index if not exists application_collaborators_workspace_id_idx on public.application_collaborators(workspace_id);
+create index if not exists application_collaborators_application_idx on public.application_collaborators(tracked_application_id);
+create index if not exists application_collaborators_external_application_idx on public.application_collaborators(application_external_id);
+create index if not exists application_collaborators_member_idx on public.application_collaborators(workspace_member_id);
+create index if not exists application_collaborators_external_member_idx on public.application_collaborators(member_external_id);
 create unique index if not exists review_comments_user_external_unique_idx on public.review_comments(user_id, comment_external_id);
 create index if not exists review_comments_user_id_idx on public.review_comments(user_id);
 create index if not exists review_comments_workspace_id_idx on public.review_comments(workspace_id);
@@ -439,10 +498,17 @@ create index if not exists grant_sources_external_id_idx on public.grant_sources
 create index if not exists grant_ingestion_runs_workspace_id_idx on public.grant_ingestion_runs(workspace_id);
 create index if not exists grant_ingestion_runs_source_external_id_idx on public.grant_ingestion_runs(source_external_id);
 create index if not exists grant_match_scores_user_id_idx on public.grant_match_scores(user_id);
+create index if not exists grant_match_scores_workspace_id_idx on public.grant_match_scores(workspace_id);
 create index if not exists grant_match_scores_grant_external_id_idx on public.grant_match_scores(grant_external_id);
 create index if not exists proposal_generation_runs_user_id_idx on public.proposal_generation_runs(user_id);
 create index if not exists proposal_generation_runs_workspace_id_idx on public.proposal_generation_runs(workspace_id);
 create index if not exists notification_preferences_user_id_idx on public.notification_preferences(user_id);
+create unique index if not exists notification_events_user_external_unique_idx on public.notification_events(user_id, notification_external_id);
+create index if not exists notification_events_user_id_idx on public.notification_events(user_id);
+create index if not exists notification_events_workspace_id_idx on public.notification_events(workspace_id);
+create index if not exists notification_events_type_idx on public.notification_events(notification_type);
+create index if not exists notification_events_status_idx on public.notification_events(status);
+create index if not exists notification_events_created_at_idx on public.notification_events(created_at desc);
 create index if not exists workspace_preferences_workspace_id_idx on public.workspace_preferences(workspace_id);
 create index if not exists workspace_preferences_user_id_idx on public.workspace_preferences(user_id);
 create index if not exists audit_events_user_id_idx on public.audit_events(user_id);
@@ -489,6 +555,11 @@ create trigger set_application_checklists_updated_at
 before update on public.application_checklists
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_application_collaborators_updated_at on public.application_collaborators;
+create trigger set_application_collaborators_updated_at
+before update on public.application_collaborators
+for each row execute function public.set_updated_at();
+
 drop trigger if exists set_review_comments_updated_at on public.review_comments;
 create trigger set_review_comments_updated_at
 before update on public.review_comments
@@ -524,6 +595,11 @@ create trigger set_notification_preferences_updated_at
 before update on public.notification_preferences
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_notification_events_updated_at on public.notification_events;
+create trigger set_notification_events_updated_at
+before update on public.notification_events
+for each row execute function public.set_updated_at();
+
 drop trigger if exists set_workspace_preferences_updated_at on public.workspace_preferences;
 create trigger set_workspace_preferences_updated_at
 before update on public.workspace_preferences
@@ -542,6 +618,7 @@ alter table public.saved_grants enable row level security;
 alter table public.proposal_drafts enable row level security;
 alter table public.tracked_applications enable row level security;
 alter table public.application_checklists enable row level security;
+alter table public.application_collaborators enable row level security;
 alter table public.review_comments enable row level security;
 alter table public.activity_log enable row level security;
 alter table public.subscriptions enable row level security;
@@ -550,6 +627,7 @@ alter table public.grant_ingestion_runs enable row level security;
 alter table public.grant_match_scores enable row level security;
 alter table public.proposal_generation_runs enable row level security;
 alter table public.notification_preferences enable row level security;
+alter table public.notification_events enable row level security;
 alter table public.workspace_preferences enable row level security;
 alter table public.audit_events enable row level security;
 alter table public.user_feedback enable row level security;
@@ -933,6 +1011,68 @@ using (
   )
 );
 
+drop policy if exists "application_collaborators_select_own" on public.application_collaborators;
+create policy "application_collaborators_select_own"
+on public.application_collaborators
+for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+drop policy if exists "application_collaborators_select_workspace" on public.application_collaborators;
+create policy "application_collaborators_select_workspace"
+on public.application_collaborators
+for select
+to authenticated
+using (
+  public.is_workspace_member(workspace_id)
+  or exists (
+    select 1
+    from public.tracked_applications ta
+    where (
+        ta.id = application_collaborators.tracked_application_id
+        or ta.application_external_id = application_collaborators.application_external_id
+      )
+      and public.is_workspace_member(ta.workspace_id)
+  )
+);
+
+drop policy if exists "application_collaborators_insert_workspace_role" on public.application_collaborators;
+create policy "application_collaborators_insert_workspace_role"
+on public.application_collaborators
+for insert
+to authenticated
+with check (
+  (select auth.uid()) = user_id
+  and (
+    workspace_id is null
+    or public.is_workspace_role(workspace_id, array['Owner', 'Admin', 'Researcher'])
+  )
+);
+
+drop policy if exists "application_collaborators_update_workspace_role" on public.application_collaborators;
+create policy "application_collaborators_update_workspace_role"
+on public.application_collaborators
+for update
+to authenticated
+using (
+  (select auth.uid()) = user_id
+  or public.is_workspace_role(workspace_id, array['Owner', 'Admin', 'Researcher'])
+)
+with check (
+  (select auth.uid()) = user_id
+  or public.is_workspace_role(workspace_id, array['Owner', 'Admin', 'Researcher'])
+);
+
+drop policy if exists "application_collaborators_delete_workspace_role" on public.application_collaborators;
+create policy "application_collaborators_delete_workspace_role"
+on public.application_collaborators
+for delete
+to authenticated
+using (
+  (select auth.uid()) = user_id
+  or public.is_workspace_role(workspace_id, array['Owner', 'Admin', 'Researcher'])
+);
+
 drop policy if exists "review_comments_select_own" on public.review_comments;
 create policy "review_comments_select_own"
 on public.review_comments
@@ -1061,16 +1201,34 @@ create policy "grant_match_scores_own"
 on public.grant_match_scores
 for all
 to authenticated
-using ((select auth.uid()) = user_id)
-with check ((select auth.uid()) = user_id);
+using (
+  (select auth.uid()) = user_id
+  or public.is_workspace_member(workspace_id)
+)
+with check (
+  (select auth.uid()) = user_id
+  and (
+    workspace_id is null
+    or public.is_workspace_member(workspace_id)
+  )
+);
 
 drop policy if exists "proposal_generation_runs_own" on public.proposal_generation_runs;
 create policy "proposal_generation_runs_own"
 on public.proposal_generation_runs
 for all
 to authenticated
-using ((select auth.uid()) = user_id)
-with check ((select auth.uid()) = user_id);
+using (
+  (select auth.uid()) = user_id
+  or public.is_workspace_member(workspace_id)
+)
+with check (
+  (select auth.uid()) = user_id
+  and (
+    workspace_id is null
+    or public.is_workspace_member(workspace_id)
+  )
+);
 
 drop policy if exists "notification_preferences_own" on public.notification_preferences;
 create policy "notification_preferences_own"
@@ -1079,6 +1237,23 @@ for all
 to authenticated
 using ((select auth.uid()) = user_id)
 with check ((select auth.uid()) = user_id);
+
+drop policy if exists "notification_events_own_or_workspace" on public.notification_events;
+create policy "notification_events_own_or_workspace"
+on public.notification_events
+for all
+to authenticated
+using (
+  (select auth.uid()) = user_id
+  or public.is_workspace_member(workspace_id)
+)
+with check (
+  (select auth.uid()) = user_id
+  and (
+    workspace_id is null
+    or public.is_workspace_member(workspace_id)
+  )
+);
 
 drop policy if exists "workspace_preferences_owner" on public.workspace_preferences;
 drop policy if exists "workspace_preferences_admin" on public.workspace_preferences;
@@ -1118,7 +1293,14 @@ to authenticated
 using (user_id = (select auth.uid()))
 with check (user_id = (select auth.uid()));
 
+drop policy if exists "grants_select_authenticated" on public.grants;
+create policy "grants_select_authenticated"
+on public.grants
+for select
+to authenticated
+using (true);
+
 -- Remaining production security review:
--- grants: decide whether authenticated users can read all published grants or only workspace-imported grants.
+-- grants_insert/update/delete: writes should remain server-side through the ingest-grants Edge Function only.
 -- subscriptions: reads are workspace-scoped; writes should remain server-side through payment webhooks.
 -- workspace ownership transfer and invites should be implemented through audited server functions.

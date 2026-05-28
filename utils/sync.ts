@@ -30,10 +30,15 @@ export function getEntitySyncLabel(entity: SyncEntityStatus['entity']) {
     reviewComments: 'Review comments',
     activityLog: 'Activity log',
     workspaceMembers: 'Workspace members',
+    applicationCollaborators: 'Application collaborators',
     profile: 'Profile',
     settings: 'Settings',
     workspacePreferences: 'Workspace preferences',
     notificationPreferences: 'Notification preferences',
+    aiMatchScores: 'AI match scores',
+    aiRunHistory: 'AI run history',
+    subscriptionState: 'Subscription state',
+    notificationQueue: 'Notification queue',
   };
 
   return labels[entity];
@@ -93,13 +98,16 @@ export function buildSyncEntityStatuses(authMode: AuthMode): SyncEntityStatus[] 
     'reviewComments',
     'activityLog',
     'workspaceMembers',
+    'applicationCollaborators',
     'profile',
-  ];
-  const localEntities: SyncEntityStatus['entity'][] = [
-    'settings',
     'workspacePreferences',
     'notificationPreferences',
+    'aiMatchScores',
+    'aiRunHistory',
+    'subscriptionState',
+    'notificationQueue',
   ];
+  const localEntities: SyncEntityStatus['entity'][] = ['settings'];
   const now = shouldUseSupabase(authMode) ? new Date().toISOString() : undefined;
 
   return [...syncedEntities, ...localEntities].map((entity) => {
@@ -113,7 +121,7 @@ export function buildSyncEntityStatuses(authMode: AuthMode): SyncEntityStatus[] 
       mode: entityMode,
       status,
       lastSyncedAt: entityMode === 'Supabase' ? now : undefined,
-      warning: isLocal ? 'Preference sync is intentionally local for now.' : createSyncWarning(authMode),
+      warning: isLocal ? 'General app settings remain local demo controls.' : createSyncWarning(authMode),
     };
   });
 }

@@ -2,8 +2,58 @@ import { mockGrants, mockRecommendations } from '@/data/mockGrants';
 import { supabase } from '@/services/supabaseClient';
 import { Grant, Recommendation } from '@/types';
 
+const GRANT_SELECT =
+  'id,grant_external_id,title,funder,description,eligibility,deadline,funding_amount,region_eligibility,required_documents,topics,sectors,source_url';
+
+interface GrantRow {
+  id: string;
+  grant_external_id: string | null;
+  title: string;
+  funder: string;
+  description: string;
+  eligibility: string | null;
+  deadline: string | null;
+  funding_amount: string | null;
+  region_eligibility: string | null;
+  required_documents: string[] | null;
+  topics: string[] | null;
+  sectors: string[] | null;
+  source_url: string | null;
+}
+
+function mapGrantRow(row: GrantRow): Grant {
+  return {
+    id: row.grant_external_id ?? row.id,
+    title: row.title,
+    funder: row.funder,
+    description: row.description,
+    eligibility: row.eligibility ?? '',
+    deadline: row.deadline ?? '',
+    fundingAmount: row.funding_amount ?? '',
+    regionEligibility: row.region_eligibility ?? '',
+    requiredDocuments: row.required_documents ?? [],
+    topics: row.topics ?? [],
+    sectors: row.sectors ?? [],
+    sourceUrl: row.source_url ?? undefined,
+  };
+}
+
 export async function fetchGrants(): Promise<Grant[]> {
-  return mockGrants;
+  if (!supabase) {
+    return mockGrants;
+  }
+
+  const { data, error } = await supabase
+    .from('grants')
+    .select(GRANT_SELECT)
+    .order('deadline', { ascending: true })
+    .returns<GrantRow[]>();
+
+  if (error || !data || data.length === 0) {
+    return mockGrants;
+  }
+
+  return data.map(mapGrantRow);
 }
 
 export async function fetchRecommendations(): Promise<Recommendation[]> {
@@ -11,7 +61,37 @@ export async function fetchRecommendations(): Promise<Recommendation[]> {
 }
 
 export async function fetchGrantById(grantId: string): Promise<Grant | undefined> {
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('grants')
+      .select(GRANT_SELECT)
+      .eq('grant_external_id', grantId)
+      .maybeSingle<GrantRow>();
+
+    if (!error && data) {
+      return mapGrantRow(data);
+    }
+
+    if (isUuid(grantId)) {
+      const { data: idData, error: idError } = await supabase
+        .from('grants')
+        .select(GRANT_SELECT)
+        .eq('id', grantId)
+        .maybeSingle<GrantRow>();
+
+      if (!idError && idData) {
+        return mapGrantRow(idData);
+      }
+    }
+  }
+
   return mockGrants.find((grant) => grant.id === grantId);
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
 }
 
 export async function saveGrant(grantId: string, savedGrantIds: string[]): Promise<string[]> {

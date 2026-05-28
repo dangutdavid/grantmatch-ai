@@ -12,12 +12,16 @@ import { useGrantMatch } from '@/hooks/use-grant-match';
 import { getAiBackendMode, rankGrantsForUser, requestGrantMatch } from '@/services/aiService';
 
 export default function MatchLabScreen() {
-  const { currentUser, grants } = useGrantMatch();
+  const { currentUser, currentWorkspace, grants } = useGrantMatch();
   const [ranked, setRanked] = useState(() => rankGrantsForUser({ profile: currentUser, grants }).slice(0, 5));
   const aiMode = getAiBackendMode();
 
   async function runMockMatch() {
-    const response = await requestGrantMatch({ profile: currentUser, grants });
+    const response = await requestGrantMatch({
+      profile: currentUser,
+      grants,
+      workspaceId: currentWorkspace.id,
+    });
     setRanked(response.results.slice(0, 5));
   }
 
